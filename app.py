@@ -78,6 +78,12 @@ def insert_service_message(supabase, session_id, result, created_at, service_res
     }
     supabase.table("messages").insert(message).execute()
 
+# Root endpoint for quick “is this alive?” checks
+@app.route("/", methods=["GET", "HEAD"])
+def index():
+    return "OK", 200
+
+
 # Main route to handle search requests
 @app.route('/api/search', methods=['POST'])
 def search():
