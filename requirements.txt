@@ -12,6 +12,7 @@ deprecation==2.1.0
 Flask==3.1.1
 frozenlist==1.6.0
 gotrue==2.12.0
+gunicorn==23.0.0
 h11==0.16.0
 h2==4.2.0
 hpack==4.1.0
@@ -39,6 +40,7 @@ PyJWT==2.10.1
 pytest==8.3.5
 pytest-mock==3.14.0
 python-dateutil==2.9.0.post0
+python-dotenv==1.1.0
 pytz==2025.2
 PyYAML==6.0.2
 realtime==2.4.3
