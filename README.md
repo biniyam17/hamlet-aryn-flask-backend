@@ -42,7 +42,8 @@ ARYN_API_TOKEN=your_aryn_token
 Start the Flask server:
 
 ```bash
-python app.py
+python app.py # for local dev
+gunicorn app:app --bind 0.0.0.0:8080 # to simulate production server
 ```
 
 The server will run on port 8080 by default.
