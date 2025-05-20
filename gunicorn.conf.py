@@ -1,2 +1,2 @@
-timeout = 120
+timeout = 240
 workers = 4
