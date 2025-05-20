@@ -4,6 +4,7 @@ from supabase import create_client, Client as SupabaseClient
 import os
 from datetime import datetime, UTC
 from dotenv import load_dotenv
+import glob
 
 # Load environment variables from .env file
 load_dotenv()
@@ -78,7 +79,7 @@ def insert_service_message(supabase, session_id, result, created_at, service_res
     }
     supabase.table("messages").insert(message).execute()
 
-# Root endpoint for quick “is this alive?” checks
+# Root endpoint for quick "is this alive?" checks
 @app.route("/", methods=["GET", "HEAD"])
 def index():
     return "OK", 200
@@ -153,6 +154,155 @@ def search():
         "query_id": query_result.query_id,
         "result": query_result.result,
     })
+
+def upload_document_to_aryn(client: Client, file_path: str, docset_id: str) -> dict:
+    """Helper function to upload a document to Aryn and return the async task info"""
+    try:
+        async_task = client.add_doc_async(file=file_path, docset_id=docset_id)
+        print(f"[{datetime.now()}] Document upload initiated for {file_path}")
+        return {
+            "status": "success",
+            "task_id": async_task.task_id,
+            "file_path": file_path
+        }
+    except Exception as e:
+        print(f"[{datetime.now()}] Error initiating document upload for {file_path}: {str(e)}")
+        raise e
+
+def upsert_city_to_supabase(supabase: SupabaseClient, city_name: str, docset_id: str) -> bool:
+    """Helper function to create or update a city record in Supabase
+    
+    Args:
+        supabase: Supabase client instance
+        city_name: Name of the city (will be converted to lowercase)
+        docset_id: The docset ID from Aryn
+        
+    Returns:
+        bool: True if city was created/updated, False if it already existed
+    """
+    try:
+        # Convert city name to lowercase
+        city_name_lower = city_name.lower()
+        
+        # Check if city exists
+        result = supabase.table("cities") \
+            .select("id") \
+            .eq("name", city_name_lower) \
+            .execute()
+            
+        if result.data:
+            print(f"[{datetime.now()}] City {city_name_lower} already exists in database")
+            return False
+            
+        # Create new city record
+        supabase.table("cities") \
+            .insert({
+                "name": city_name_lower,
+                "docset_id": docset_id
+            }) \
+            .execute()
+            
+        print(f"[{datetime.now()}] Created new city record for {city_name_lower}")
+        return True
+        
+    except Exception as e:
+        print(f"[{datetime.now()}] Error upserting city to Supabase: {str(e)}")
+        raise e
+
+@app.route('/api/upload', methods=['POST'])
+def upload_document():
+    print(f"\n[{datetime.now()}] Received document upload request")
+    
+    data = request.json
+    if not data or 'file_path' not in data:
+        return jsonify({
+            "error": "No file_path provided"
+        }), 400
+        
+    docset_id = data.get('docset_id')
+    if not docset_id:
+        return jsonify({
+            "error": "No docset_id provided"
+        }), 400
+        
+    file_path = data['file_path']
+    print(f"[{datetime.now()}] Processing upload - Docset: {docset_id}, File: {file_path}")
+    
+    try:
+        myClient = Client(aryn_api_key=API_TOKEN)
+        result = upload_document_to_aryn(myClient, file_path, docset_id)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to initiate document upload: {str(e)}"
+        }), 500
+
+@app.route('/api/process-documents', methods=['POST'])
+def process_documents():
+    print(f"\n[{datetime.now()}] Starting batch document processing")
+    import pdb; pdb.set_trace()  # Debugger will stop here
+    
+    try:
+        myClient = Client(aryn_api_key=API_TOKEN)
+        documents_path = "../documents/*.pdf"
+        
+        # Get all PDF files
+        pdf_files = glob.glob(documents_path)
+        if not pdf_files:
+            return jsonify({
+                "error": "No PDF files found in documents directory"
+            }), 400
+            
+        print(f"[{datetime.now()}] Found {len(pdf_files)} PDF files")
+        
+        # Process each file
+        for file_path in pdf_files:
+            # Extract city name from filename (first word before underscore)
+            city_name = os.path.basename(file_path).split('_')[0]
+            docset_name = f"Hamlet - {city_name}"
+            
+            print(f"\n[{datetime.now()}] Processing {file_path}")
+            print(f"[{datetime.now()}] Looking for docset: {docset_name}")
+            
+            # Check if docset exists
+            existing_docsets = myClient.list_docsets(name_eq=docset_name).get_all()
+            print(f"[{datetime.now()}] Found {len(existing_docsets)} existing docsets")
+            
+            if existing_docsets:
+                docset = existing_docsets[0]
+                docset_id = docset.docset_id
+                print(f"[{datetime.now()}] Using existing docset with ID: {docset_id}")
+            else:
+                # Create new docset
+                docset = myClient.create_docset(name=docset_name)
+                docset_id = docset.value.docset_id  # Access the value property to get DocSetMetadata
+                print(f"[{datetime.now()}] Created new docset: {docset_name} with ID: {docset_id}")
+            
+            # Always ensure city record exists in Supabase with current docset_id
+            upsert_city_to_supabase(supabase, city_name, docset_id)
+            
+            # Check if docset already has documents
+            docs = list(myClient.list_docs(docset_id=docset_id))
+            print(f"[{datetime.now()}] Found {len(docs)} documents in docset {docset_id}")
+            if len(docs) > 0:
+                print(f"[{datetime.now()}] Skipping {file_path} - docset {docset_name} already has documents")
+                continue
+            
+            # Upload document
+            result = upload_document_to_aryn(myClient, file_path, docset_id)
+            print(f"[{datetime.now()}] Uploaded {file_path} to docset {docset_name}")
+            
+        return jsonify({
+            "status": "success",
+            "message": "Document processing completed"
+        })
+        
+    except Exception as e:
+        print(f"[{datetime.now()}] Error processing documents: {str(e)}")
+        return jsonify({
+            "error": f"Failed to process documents: {str(e)}"
+        }), 500
 
 if __name__ == '__main__':
     # Start the Flask app on port 8080
